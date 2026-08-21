@@ -1,12 +1,13 @@
 #!/usr/bin/env node
 
 // Copyright (C) 2017-2023 Smart code 203358507
+// Local dev server for the desktop shell — zero dependencies (plain Node),
+// so a fresh checkout runs with nothing but Node.js installed.
 
 const INDEX_CACHE = 0;
 const ASSETS_CACHE = 0;
 const HTTP_PORT = 8081;
 
-const express = require('express');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
@@ -96,36 +97,28 @@ function stripExternalScripts(html) {
     return html.replace(/<script[^>]*\ssrc\s*=\s*["']\s*(https?:)?\/\/[^"']+["'][^>]*>\s*<\/script>/gi, '');
 }
 
+function sendText(res, status, body, type) {
+    res.writeHead(status, {
+        'content-type': type || 'text/html; charset=utf-8',
+        'cache-control': 'no-store',
+    });
+    res.end(body);
+}
+
 function serveIndex(req, res) {
     fs.readFile(index_path, 'utf8', (err, html) => {
-        if (err) { res.status(500).send('err'); return; }
+        if (err) {
+            log(`INDEX_ERROR ${req.url}: ${err.message}`);
+            sendText(res, 500, 'err', 'text/plain');
+            return;
+        }
         let out = html;
         out = stripExternalScripts(out);
         out = out.replace('<head>', '<head>' + BLOCK_SW);
-        res.set('cache-control', 'no-store');
-        res.send(out);
+        sendText(res, 200, out);
         log(`SERVED index.html (${out.length} bytes) to ${req.url}`);
     });
 }
-
-const app = express();
-
-app.use((req, res, next) => {
-    const start = Date.now();
-    log(`REQ  ${req.method} ${req.url}`);
-    res.on('finish', () => {
-        log(`DONE ${req.method} ${req.url} -> ${res.statusCode} (${Date.now() - start}ms)`);
-    });
-    res.on('close', () => {
-        if (!res.writableEnded) {
-            log(`HUNG ${req.method} ${req.url} (closed before finish, ${Date.now() - start}ms)`);
-        }
-    });
-    next();
-});
-
-app.get('/', serveIndex);
-app.get('/index.html', serveIndex);
 
 // Same-origin reverse proxy to the Stremio streaming server.
 // The UI origin (127.0.0.1:8082) is not allowed by the server's CORS policy,
@@ -137,22 +130,24 @@ const PROXY_PATH = '/streaming-server';
 const SERVER_HOST = '127.0.0.1';
 const SERVER_PORT = 11470;
 
-function proxyToStreamingServer(req, res) {
-    const options = {
-        host: SERVER_HOST,
-        port: SERVER_PORT,
-        path: req.url,
-        method: req.method,
-        headers: Object.assign({}, req.headers, { host: `${SERVER_HOST}:${SERVER_PORT}` }),
-    };
-    const upstream = http.request(options, (up) => {
+// Mirrors express app.use(mount, ...) semantics: the handler receives req.url
+// with the mount prefix stripped.
+function stripMount(url, mount) {
+    if (url === mount) return '/';
+    if (url.startsWith(mount + '/')) return url.slice(mount.length);
+    return null;
+}
+
+function proxyRequest(res, options, tag, req, transport) {
+    const client = transport || http;
+    const upstream = client.request(options, (up) => {
         res.writeHead(up.statusCode, up.headers);
         up.pipe(res);
     });
     upstream.on('error', (err) => {
-        log(`PROXY_ERROR ${req.method} ${req.url}: ${err.message}`);
+        log(`${tag} ${req.method} ${req.url}: ${err.message}`);
         if (!res.headersSent) {
-            res.status(502).send('streaming server proxy error');
+            sendText(res, 502, `${tag.toLowerCase()} error`, 'text/plain');
         } else {
             res.end();
         }
@@ -160,75 +155,164 @@ function proxyToStreamingServer(req, res) {
     req.pipe(upstream);
 }
 
-app.use(PROXY_PATH, proxyToStreamingServer);
+function proxyToStreamingServer(req, res, targetPath) {
+    proxyRequest(res, {
+        host: SERVER_HOST,
+        port: SERVER_PORT,
+        path: targetPath,
+        method: req.method,
+        headers: Object.assign({}, req.headers, { host: `${SERVER_HOST}:${SERVER_PORT}` }),
+    }, 'PROXY_ERROR', req, http);
+}
 
 // Same-origin proxies for CORS-restricted external segment APIs.
 const EXTERNAL_PROXY_ROUTES = {
     '/proxy/introdb': { host: 'api.introdb.app', tls: true },
 };
 
-Object.keys(EXTERNAL_PROXY_ROUTES).forEach((mount) => {
-    const target = EXTERNAL_PROXY_ROUTES[mount];
+function proxyExternal(req, res, mount, target, targetPath) {
     const transport = target.tls ? https : http;
-    app.use(mount, (req, res) => {
-        const options = {
+    proxyRequest(res, {
+        host: target.host,
+        port: target.tls ? 443 : 80,
+        path: targetPath,
+        method: req.method,
+        headers: Object.assign({}, req.headers, {
             host: target.host,
-            port: target.tls ? 443 : 80,
-            path: req.url,
-            method: req.method,
-            headers: Object.assign({}, req.headers, {
-                host: target.host,
-                'user-agent': 'StremioDev/1.0',
-            }),
-        };
-        const upstream = transport.request(options, (up) => {
-            res.writeHead(up.statusCode, up.headers);
-            up.pipe(res);
-        });
-        upstream.on('error', (err) => {
-            log(`EXTERNAL_PROXY_ERROR ${req.method} ${req.url}: ${err.message}`);
-            if (!res.headersSent) {
-                res.status(502).send('external proxy error');
-            } else {
-                res.end();
-            }
-        });
-        req.pipe(upstream);
-    });
-});
+            'user-agent': 'StremioDev/1.0',
+        }),
+    }, 'EXTERNAL_PROXY_ERROR', req, transport);
+}
 
-app.get('/__probe', (req, res) => {
-    log(`PROBE ${req.query.type}${req.query.msg ? ' :: ' + req.query.msg : ''}`);
-    res.set('cache-control', 'no-store');
-    res.send('1');
-});
+const MIME_TYPES = {
+    '.html': 'text/html; charset=utf-8',
+    '.js': 'application/javascript; charset=utf-8',
+    '.mjs': 'application/javascript; charset=utf-8',
+    '.css': 'text/css; charset=utf-8',
+    '.json': 'application/json; charset=utf-8',
+    '.map': 'application/json; charset=utf-8',
+    '.txt': 'text/plain; charset=utf-8',
+    '.png': 'image/png',
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.gif': 'image/gif',
+    '.svg': 'image/svg+xml',
+    '.ico': 'image/x-icon',
+    '.webp': 'image/webp',
+    '.woff': 'font/woff',
+    '.woff2': 'font/woff2',
+    '.ttf': 'font/ttf',
+    '.otf': 'font/otf',
+    '.eot': 'application/vnd.ms-fontobject',
+    '.mp4': 'video/mp4',
+    '.webm': 'video/webm',
+    '.mp3': 'audio/mpeg',
+    '.wasm': 'application/wasm',
+    '.pdf': 'application/pdf',
+};
 
-app.get('/minimal', (_req, res) => {
-    res.set('cache-control', 'no-store');
-    res.send('<!doctype html><html><head><meta charset="utf-8"><title>minimal</title></head><body><h1>MINIMAL PAGE LOADED</h1><script>try{new Image().src="/__probe?type=minimal-load";}catch(e){}</script></body></html>');
-});
-
-// Always serve a no-op service worker so any existing registration update is harmless.
-app.get('/service-worker.js', (_req, res) => {
-    res.set('cache-control', 'no-store');
-    res.set('content-type', 'application/javascript');
-    res.send('// service worker disabled for local dev\n');
-});
-
-app.use(express.static(build_path, {
-    setHeaders: (res, p) => {
-        res.set('cache-control', 'no-store');
+// Resolves a request path to an existing file inside build_path, or null.
+// Path-traversal safe: resolved target must stay within build_path.
+function resolveStatic(pathname) {
+    let decoded;
+    try {
+        decoded = decodeURIComponent(pathname);
+    } catch (_e) {
+        return null;
     }
-// Unknown paths fall through to the streaming server: stremio-core strips
-// the path from streamingServerUrl, so its requests (settings, torrent
-// stats/streams) arrive at root level and must be proxied from here.
-})).all('*', (req, res) => {
+    const filePath = path.normalize(path.join(build_path, decoded));
+    if (!filePath.startsWith(build_path)) return null;
+    try {
+        const stat = fs.statSync(filePath);
+        if (stat.isFile()) return filePath;
+    } catch (_e) {}
+    // Directory-style URLs fall back to their index.html.
+    const idx = path.join(filePath, 'index.html');
+    try {
+        const stat = fs.statSync(idx);
+        if (stat.isFile()) return idx;
+    } catch (_e) {}
+    return null;
+}
+
+function serveStaticFile(res, filePath) {
+    const ext = path.extname(filePath).toLowerCase();
+    res.writeHead(200, {
+        'content-type': MIME_TYPES[ext] || 'application/octet-stream',
+        'cache-control': 'no-store',
+    });
+    fs.createReadStream(filePath).pipe(res);
+}
+
+const handler = (req, res) => {
+    const start = Date.now();
+    log(`REQ  ${req.method} ${req.url}`);
+    res.on('finish', () => {
+        log(`DONE ${req.method} ${req.url} -> ${res.statusCode} (${Date.now() - start}ms)`);
+    });
+    res.on('close', () => {
+        if (!res.writableEnded) {
+            log(`HUNG ${req.method} ${req.url} (closed before finish, ${Date.now() - start}ms)`);
+        }
+    });
+
+    let parsed;
+    try {
+        parsed = new URL(req.url, `http://${req.headers.host || '127.0.0.1'}`);
+    } catch (_e) {
+        sendText(res, 400, 'bad request', 'text/plain');
+        return;
+    }
+
+    const streamingPath = stripMount(parsed.pathname + (parsed.search || ''), PROXY_PATH);
+    if (streamingPath !== null) {
+        proxyToStreamingServer(req, res, streamingPath);
+        return;
+    }
+
+    for (const mount of Object.keys(EXTERNAL_PROXY_ROUTES)) {
+        const externalPath = stripMount(parsed.pathname + (parsed.search || ''), mount);
+        if (externalPath !== null) {
+            proxyExternal(req, res, mount, EXTERNAL_PROXY_ROUTES[mount], externalPath);
+            return;
+        }
+    }
+
+    if (req.method === 'GET' || req.method === 'HEAD') {
+        if (parsed.pathname === '/' || parsed.pathname === '/index.html') {
+            serveIndex(req, res);
+            return;
+        }
+        if (parsed.pathname === '/__probe') {
+            log(`PROBE ${parsed.searchParams.get('type')}${parsed.searchParams.get('msg') ? ' :: ' + parsed.searchParams.get('msg') : ''}`);
+            sendText(res, 200, '1', 'text/plain');
+            return;
+        }
+        if (parsed.pathname === '/minimal') {
+            sendText(res, 200, '<!doctype html><html><head><meta charset="utf-8"><title>minimal</title></head><body><h1>MINIMAL PAGE LOADED</h1><script>try{new Image().src="/__probe?type=minimal-load";}catch(e){}</script></body></html>');
+            return;
+        }
+        // Always serve a no-op service worker so any existing registration update is harmless.
+        if (parsed.pathname === '/service-worker.js') {
+            sendText(res, 200, '// service worker disabled for local dev\n', 'application/javascript; charset=utf-8');
+            return;
+        }
+        const staticFile = resolveStatic(parsed.pathname);
+        if (staticFile !== null) {
+            serveStaticFile(res, staticFile);
+            return;
+        }
+    }
+
+    // Unknown paths fall through to the streaming server: stremio-core strips
+    // the path from streamingServerUrl, so its requests (settings, torrent
+    // stats/streams) arrive at root level and must be proxied from here.
     log(`PROXY* ${req.method} ${req.url}`);
-    proxyToStreamingServer(req, res);
-});
+    proxyToStreamingServer(req, res, parsed.pathname + (parsed.search || ''));
+};
 
 if (HAS_TLS) {
-    const tlsServer = https.createServer(TLS_OPTS, app);
+    const tlsServer = https.createServer(TLS_OPTS, handler);
     tlsServer.on('tlsClientError', (err, tlsSocket) => {
         log(`TLS_CLIENT_ERROR: ${err && err.message}`);
     });
@@ -243,7 +327,7 @@ if (HAS_TLS) {
 // Plain-HTTP listener for the desktop shell (stremio-shell-ng --webui-url).
 // Bound to loopback only; avoids TLS trust issues with the self-signed cert.
 const HTTP_DEV_PORT = 8082;
-const httpServer = http.createServer(app);
+const httpServer = http.createServer(handler);
 httpServer.on('clientError', (err, socket) => {
     log(`HTTP_CLIENT_ERROR: ${err && err.message}`);
 });
