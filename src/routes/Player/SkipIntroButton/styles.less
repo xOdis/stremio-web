@@ -5,8 +5,11 @@
 
 .skip-intro-container {
     display: flex;
+    flex-direction: column;
     justify-content: flex-end;
     align-items: flex-end;
+    gap: 1rem;
+    pointer-events: none;
 
     .skip-intro-button {
         display: flex;
@@ -20,6 +23,8 @@
         background-color: rgba(255, 255, 255, 0.15);
         backdrop-filter: blur(15px);
         animation: skip-intro-fade-in 0.3s ease-in;
+        transition: opacity 0.3s ease-in-out, transform 0.3s ease-in-out;
+        pointer-events: auto;
 
         @keyframes skip-intro-fade-in {
             0% {
@@ -31,6 +36,12 @@
                 opacity: 1;
                 transform: translateY(0);
             }
+        }
+
+        &.exiting {
+            opacity: 0;
+            transform: translateY(1rem);
+            pointer-events: none;
         }
 
         .icon {

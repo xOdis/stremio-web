@@ -9,7 +9,7 @@ const { default: usePlayOnDevice } = require('../usePlayOnDevice');
 const Option = require('./Option');
 const styles = require('./styles');
 
-const OptionsMenu = React.memo(React.forwardRef(({ className, stream, playbackDevices, extraSubtitlesTracks, selectedExtraSubtitlesTrackId }, ref) => {
+const OptionsMenu = React.memo(React.forwardRef(({ className, stream, playbackDevices, extraSubtitlesTracks, selectedExtraSubtitlesTrackId, autoNextEnabled, onToggleAutoNext }, ref) => {
     const { t } = useTranslation();
     const platform = usePlatform();
     const toast = useToast();
@@ -95,6 +95,16 @@ const OptionsMenu = React.memo(React.forwardRef(({ className, stream, playbackDe
     return (
         <div ref={ref} className={classnames(className, styles['options-menu-container'])} onMouseDown={onMouseDown}>
             {
+                typeof onToggleAutoNext === 'function' ?
+                    <Option
+                        icon={autoNextEnabled ? 'checkmark' : 'play'}
+                        label={`${t('PLAYER_AUTO_NEXT_EPISODE', 'Auto play next episode')}: ${autoNextEnabled ? t('ON', 'On') : t('OFF', 'Off')}`}
+                        onClick={onToggleAutoNext}
+                    />
+                    :
+                    null
+            }
+            {
                 streamingUrl || downloadUrl ?
                     <Option
                         icon={'link'}
@@ -160,6 +170,8 @@ OptionsMenu.propTypes = {
     playbackDevices: PropTypes.array,
     extraSubtitlesTracks: PropTypes.array,
     selectedExtraSubtitlesTrackId: PropTypes.string,
+    autoNextEnabled: PropTypes.bool,
+    onToggleAutoNext: PropTypes.func,
 };
 
 module.exports = OptionsMenu;

@@ -22,6 +22,8 @@ const NextVideoPopup = require('./NextVideoPopup');
 const SkipIntroButton = require('./SkipIntroButton');
 const StatisticsMenu = require('./StatisticsMenu');
 const OptionsMenu = require('./OptionsMenu');
+const NextEpisodeButton = require('./NextEpisodeButton');
+const { readAutoNextEpisode, writeAutoNextEpisode } = require('./autoNextEpisodeSetting');
 const { default: CastDevicesMenu } = require('./CastDevicesMenu');
 const SubtitlesMenu = require('./SubtitlesMenu');
 const { default: AudioMenu } = require('./AudioMenu');
@@ -29,7 +31,7 @@ const SpeedMenu = require('./SpeedMenu');
 const { default: SideDrawerButton } = require('./SideDrawerButton');
 const { default: SideDrawer } = require('./SideDrawer');
 const usePlayer = require('./usePlayer');
-const useIntroTimestamps = require('./useIntroTimestamps');
+const useSkipSegments = require('./useSkipSegments');
 const { default: usePlayOnDevice } = require('./usePlayOnDevice');
 const { default: useKeyboardSeek } = require('./useKeyboardSeek');
 const useStatistics = require('./useStatistics');
@@ -72,7 +74,15 @@ const Player = () => {
     const streamingServer = useStreamingServer();
     const statistics = useStatistics(player, streamingServer);
     const video = useVideo();
-    const introTimestamps = useIntroTimestamps(player, video.state.duration);
+    const skipSegments = useSkipSegments(player, video.state.duration);
+    const [autoNextEnabled, setAutoNextEnabled] = React.useState(readAutoNextEpisode);
+    const onToggleAutoNext = React.useCallback(() => {
+        setAutoNextEnabled((prev) => {
+            const next = !prev;
+            writeAutoNextEpisode(next);
+            return next;
+        });
+    }, []);
     const routeFocused = useRouteFocused();
     const platform = usePlatform();
     const toast = useToast();
@@ -271,12 +281,25 @@ const Player = () => {
         seek(time, video.state.duration, video.state.manifest?.name);
     }, [video.state.duration, video.state.manifest]);
 
-    const onSkipIntro = React.useCallback(() => {
-        if (introTimestamps && introTimestamps.endMs !== null) {
-            video.setTime(introTimestamps.endMs);
-            seek(introTimestamps.endMs, video.state.duration, video.state.manifest?.name);
+    const onSkipSegment = React.useCallback((segment) => {
+        if (!segment || typeof segment.endMs !== 'number' || !isFinite(segment.endMs)) {
+            return;
         }
-    }, [introTimestamps, video.state.duration, video.state.manifest]);
+        let target = segment.endMs;
+        // Never jump across the start of a following segment: if the recap
+        // data overlaps the intro, skipping the recap must land at the intro
+        // start (its own button takes over), not silently skip both.
+        if (Array.isArray(skipSegments)) {
+            skipSegments.forEach((other) => {
+                if (other === segment || other.type === segment.type) return;
+                if (typeof other.startMs !== 'number' || !isFinite(other.startMs)) return;
+                if (other.startMs > segment.startMs && other.startMs < target) {
+                    target = other.startMs;
+                }
+            });
+        }
+        commitSeek(target);
+    }, [skipSegments, commitSeek]);
 
     const {
         time: keyboardSeekTime,
@@ -300,11 +323,103 @@ const Player = () => {
         return keyboardSeekTime === null && immersed && !casting && video.state.paused !== null && !video.state.paused && !menusOpen;
     }, [keyboardSeekTime, immersed, casting, video.state.paused, menusOpen]);
 
-    const showSkipIntro = React.useMemo(() => {
-        if (!introTimestamps || video.state.time === null) return false;
-        const timeMs = video.state.time;
-        return timeMs >= introTimestamps.startMs && timeMs <= introTimestamps.endMs;
-    }, [introTimestamps, video.state.time]);
+    // Skip UI is only meaningful once the stream for the current selection
+    // is actually Ready — before that, playback state belongs to the
+    // previous episode.
+    const skipUiAllowed = React.useMemo(() => {
+        return player.stream !== null && player.stream.type === 'Ready';
+    }, [player.stream]);
+
+    // Playback time is only usable when it is a real finite number — during
+    // loads it can be null OR NaN, and NaN silently poisons comparisons.
+    const playbackTime = React.useMemo(() => {
+        return typeof video.state.time === 'number' && isFinite(video.state.time) ? video.state.time : null;
+    }, [video.state.time]);
+    const playbackDuration = React.useMemo(() => {
+        return typeof video.state.duration === 'number' && isFinite(video.state.duration) ? video.state.duration : null;
+    }, [video.state.duration]);
+
+    const activeSkipSegments = React.useMemo(() => {
+        if (!skipUiAllowed) return [];
+        if (!Array.isArray(skipSegments) || skipSegments.length === 0 || playbackTime === null) return [];
+        return skipSegments.filter((segment) =>
+            playbackTime >= segment.startMs && (segment.endMs === null || playbackTime < segment.endMs)
+        );
+    }, [skipUiAllowed, skipSegments, playbackTime]);
+
+    const NEXT_EPISODE_COUNTDOWN_MS = 10000;
+    const creditsSegment = React.useMemo(() => {
+        return Array.isArray(skipSegments) ?
+            skipSegments.find((segment) => segment.type === 'credits' && typeof segment.startMs === 'number' && isFinite(segment.startMs)) ?? null
+            :
+            null;
+    }, [skipSegments]);
+
+    const [nextEpisodeDismissed, setNextEpisodeDismissed] = React.useState(false);
+    const autoNextFiredRef = React.useRef(false);
+    const videoKey = player?.selected?.streamRequest?.path?.id ?? null;
+    React.useEffect(() => {
+        setNextEpisodeDismissed(false);
+        autoNextFiredRef.current = false;
+    }, [videoKey]);
+
+    // Countdown runs through the first 10s of the outro. Cancelling stops
+    // the countdown and disables the automatic jump for this episode — but
+    // the Next Episode button itself stays visible and clickable.
+    const nextEpisodeCountdown = React.useMemo(() => {
+        if (!skipUiAllowed || !autoNextEnabled || creditsSegment === null || nextEpisodeDismissed || playbackTime === null) return null;
+        const elapsed = playbackTime - creditsSegment.startMs;
+        if (elapsed < 0 || elapsed >= NEXT_EPISODE_COUNTDOWN_MS) return null;
+        const secondsLeft = Math.ceil((NEXT_EPISODE_COUNTDOWN_MS - elapsed) / 1000);
+        return isFinite(secondsLeft) ? Math.max(1, secondsLeft) : null;
+    }, [skipUiAllowed, autoNextEnabled, creditsSegment, nextEpisodeDismissed, playbackTime]);
+
+    // Auto-next: when enabled and not cancelled, jump to the end of media
+    // once the 10s countdown finishes. Fires once per video.
+    React.useEffect(() => {
+        if (!skipUiAllowed || !autoNextEnabled || creditsSegment === null || nextEpisodeDismissed || autoNextFiredRef.current) return;
+        if (playbackTime === null || playbackDuration === null) return;
+        if (playbackTime >= creditsSegment.startMs + NEXT_EPISODE_COUNTDOWN_MS) {
+            autoNextFiredRef.current = true;
+            commitSeek(playbackDuration);
+        }
+    }, [skipUiAllowed, autoNextEnabled, creditsSegment, nextEpisodeDismissed, playbackTime, playbackDuration]);
+
+    // Manual pill shown during the outro whenever the countdown is not
+    // active — including after cancelling auto-next for this episode, so
+    // the button remains visible and functional.
+    const showManualNextEpisode = React.useMemo(() => {
+        if (!skipUiAllowed || creditsSegment === null || playbackTime === null || playbackDuration === null) return false;
+        return nextEpisodeCountdown === null && playbackTime >= creditsSegment.startMs;
+    }, [skipUiAllowed, creditsSegment, playbackTime, playbackDuration, nextEpisodeCountdown]);
+
+    const nextEpisodeElement = (nextEpisodeCountdown !== null || showManualNextEpisode) && playbackDuration !== null ?
+        (
+            <NextEpisodeButton
+                secondsLeft={nextEpisodeCountdown}
+                totalSeconds={NEXT_EPISODE_COUNTDOWN_MS / 1000}
+                onClick={() => commitSeek(playbackDuration)}
+                onCancel={() => setNextEpisodeDismissed(true)}
+            />
+        )
+        :
+        null;
+
+    const skipItems = React.useMemo(() => {
+        return activeSkipSegments
+            .filter((segment) => segment.type !== 'credits')
+            .map((segment) => ({
+                key: `${segment.type}:${segment.startMs}`,
+                label: segment.type === 'recap' ?
+                    t('PLAYER_SKIP_RECAP', 'Skip Recap')
+                    :
+                    segment.type === 'preview' ?
+                        t('PLAYER_SKIP_PREVIEW', 'Skip Preview')
+                        :
+                        t('PLAYER_SKIP_INTRO', 'Skip Intro'),
+                onClick: () => onSkipSegment(segment),
+            }));
+    }, [activeSkipSegments, onSkipSegment, t]);
 
     React.useEffect(() => {
         if (!video.state.manifest?.props.includes('subtitlesOffsetMinimum')) {
@@ -1025,6 +1140,8 @@ const Player = () => {
                     playbackDevices={playbackDevices}
                     extraSubtitlesTracks={extraSubtitleTracks}
                     selectedExtraSubtitlesTrackId={selectedExtraSubtitleTrackId}
+                    autoNextEnabled={autoNextEnabled}
+                    onToggleAutoNext={onToggleAutoNext}
                 />
             </ContextMenu>
             <HorizontalNavBar
@@ -1089,10 +1206,11 @@ const Player = () => {
                 disabled={subtitlesMenuOpen}
             />
             {
-                showSkipIntro ?
+                (skipSegments !== null && skipSegments.length > 0) || nextEpisodeElement !== null ?
                     <SkipIntroButton
                         className={classnames(styles['layer'], styles['skip-intro-layer'])}
-                        onClick={onSkipIntro}
+                        items={skipItems}
+                        prepend={nextEpisodeElement}
                     />
                     :
                     null
@@ -1160,6 +1278,8 @@ const Player = () => {
                     playbackDevices={playbackDevices}
                     extraSubtitlesTracks={extraSubtitleTracks}
                     selectedExtraSubtitlesTrackId={selectedExtraSubtitleTrackId}
+                    autoNextEnabled={autoNextEnabled}
+                    onToggleAutoNext={onToggleAutoNext}
                 />
             </Transition>
         </div>
