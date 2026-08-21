@@ -3,7 +3,7 @@ import EventEmitter from 'eventemitter3';
 
 const IPC = globalThis?.chrome?.webview;
 const LEGACY_IPC = globalThis?.qt?.webChannelTransport;
-if (LEGACY_IPC) LEGACY_IPC.onmessage = () => { /* empty */ };
+if (LEGACY_IPC && !IPC) LEGACY_IPC.onmessage = () => { /* empty */ };
 
 const events = new EventEmitter();
 
