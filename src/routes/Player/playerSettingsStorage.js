@@ -2,12 +2,26 @@
 
 const KEY = 'stremio.playerSettings';
 
-// System fonts available in the desktop shell (Windows). A font missing
-// on the machine gracefully falls back through the stack at render time.
+// Fonts offered in the subtitle settings. Bundled Google Fonts (Cairo,
+// Alexandria, Tajawal, Lalezar, Noto Naskh Arabic, Inter, Roboto,
+// Open Sans, Lato) work without installing them: the local server exposes
+// the assets/fonts folder and mpv's libass loads fonts from it
+// (sub-fonts-dir). System fonts work as usual. Dubai works once its .ttf
+// is dropped into assets/fonts (license forbids redistributing it).
 const SUBTITLE_FONTS = [
     'Arial',
+    'Cairo',
+    'Alexandria',
+    'Tajawal',
+    'Lalezar',
+    'Dubai',
+    'Noto Naskh Arabic',
     'Thamaniya',
     'Tahoma',
+    'Inter',
+    'Roboto',
+    'Open Sans',
+    'Lato',
     'Segoe UI',
     'Verdana',
     'Calibri',

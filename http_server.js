@@ -343,6 +343,28 @@ async function handleTmdbTrending(req, res) {
     }
 }
 
+// Subtitle font support: exposes the on-disk path of assets/fonts so the
+// desktop shell can point mpv's libass at it (sub-fonts-dir) — bundled or
+// drop-in fonts then work without installing them on Windows. Points at
+// the source assets folder (same machine as the shell), independent of
+// webpack build output.
+const FONTS_DIR = path.resolve(__dirname, 'assets', 'fonts');
+
+function handleFontsDir(req, res) {
+    sendText(res, 200, JSON.stringify({ path: FONTS_DIR }), 'application/json; charset=utf-8');
+}
+
+function handleFontsList(req, res) {
+    try {
+        const fonts = fs.readdirSync(FONTS_DIR)
+            .filter((name) => /\.ttf$/i.test(name))
+            .map((name) => name.replace(/\.ttf$/i, ''));
+        sendText(res, 200, JSON.stringify({ fonts }), 'application/json; charset=utf-8');
+    } catch (_e) {
+        sendText(res, 200, JSON.stringify({ fonts: [] }), 'application/json; charset=utf-8');
+    }
+}
+
 function handleTranslate(req, res, query) {
     const text = (query.get('text') || '').slice(0, 5000);
     const target = (query.get('target') || 'en').replace(/[^a-zA-Z-]/g, '').slice(0, 10);
@@ -484,6 +506,16 @@ const handler = (req, res) => {
 
     if (parsed.pathname === '/proxy/tmdb/trending') {
         handleTmdbTrending(req, res);
+        return;
+    }
+
+    if (parsed.pathname === '/fonts-dir') {
+        handleFontsDir(req, res);
+        return;
+    }
+
+    if (parsed.pathname === '/fonts-list') {
+        handleFontsList(req, res);
         return;
     }
 

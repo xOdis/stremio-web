@@ -27,6 +27,31 @@ const OptionsMenu = require('./OptionsMenu');
 const NextEpisodeButton = require('./NextEpisodeButton');
 const { readAutoNextEpisode, writeAutoNextEpisode } = require('./autoNextEpisodeSetting');
 const { readPlayerSettings, writePlayerSettings, defaultSubtitleFont, subtitleFontStack } = require('./playerSettingsStorage');
+
+// Resolves the on-disk fonts folder (served by the local server) so mpv's
+// libass can load bundled/drop-in fonts that are not installed in Windows.
+let fontsDirPromise = null;
+const fetchFontsDir = () => {
+    if (fontsDirPromise === null) {
+        fontsDirPromise = fetch('/fonts-dir')
+            .then((response) => response.ok ? response.json() : null)
+            .then((data) => typeof data?.path === 'string' && data.path.length > 0 ? data.path : null)
+            .catch(() => null);
+    }
+    return fontsDirPromise;
+};
+const sendSubtitleFontToShell = (shell, font) => {
+    const primaryFont = String(font ?? '').replace(/['"\\]/g, '').trim();
+    if (primaryFont.length === 0) {
+        return;
+    }
+    fetchFontsDir().then((fontsDir) => {
+        if (fontsDir !== null) {
+            shell.send('mpv-set-prop', 'sub-fonts-dir', fontsDir);
+        }
+        shell.send('mpv-set-prop', 'sub-font', primaryFont);
+    });
+};
 const { default: CastDevicesMenu } = require('./CastDevicesMenu');
 const SubtitlesMenu = require('./SubtitlesMenu');
 const { default: AudioMenu } = require('./AudioMenu');
@@ -633,10 +658,7 @@ const Player = () => {
         if (saved.subtitlesBackgroundColor !== undefined) video.setSubtitlesBackgroundColor(saved.subtitlesBackgroundColor);
         if (saved.subtitlesOutlineColor !== undefined) video.setSubtitlesOutlineColor(saved.subtitlesOutlineColor);
         if (platform.shell.active) {
-            const primaryFont = String(subtitlesFont ?? '').replace(/['"\\]/g, '').trim();
-            if (primaryFont.length > 0) {
-                platform.shell.send('mpv-set-prop', 'sub-font', primaryFont);
-            }
+            sendSubtitleFontToShell(platform.shell, subtitlesFont);
         }
     }, [video.state.time, videoKey, subtitlesFont, platform.shell.active]);
 
@@ -689,10 +711,7 @@ const Player = () => {
         // the font must go through the shell IPC as an mpv property. The
         // DOM/::cue injection below only affects the browser video path.
         if (platform.shell.active) {
-            const primaryFont = String(subtitlesFont ?? '').replace(/['"\\]/g, '').trim();
-            if (primaryFont.length > 0) {
-                platform.shell.send('mpv-set-prop', 'sub-font', primaryFont);
-            }
+            sendSubtitleFontToShell(platform.shell, subtitlesFont);
         }
         const container = video.containerRef.current;
         if (container === null) {
