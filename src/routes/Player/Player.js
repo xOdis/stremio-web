@@ -582,6 +582,11 @@ const Player = () => {
     // Persisted player settings: restored once per video as soon as each
     // engine prop reports a real value; saved (debounced) on every change.
     const restoredSettingsRef = React.useRef({});
+    // Second restore pass at playback start: mpv only accepts properties
+    // reliably once the file is loaded — earlier commands can be dropped
+    // (volume) or overwritten later (subtitle styling on
+    // implementationChanged), so everything saved is re-applied here.
+    const playbackStartedForKeyRef = React.useRef(null);
     React.useEffect(() => {
         restoredSettingsRef.current = {};
     }, [videoKey]);
@@ -609,6 +614,38 @@ const Player = () => {
     }, [video.state]);
 
     React.useEffect(() => {
+        if (typeof video.state.time !== 'number' || !isFinite(video.state.time)) {
+            return;
+        }
+        if (playbackStartedForKeyRef.current === videoKey) {
+            return;
+        }
+        playbackStartedForKeyRef.current = videoKey;
+
+        const saved = readPlayerSettings();
+        if (saved.volume !== undefined) video.setVolume(saved.volume);
+        if (saved.muted !== undefined) video.setMuted(saved.muted);
+        if (saved.playbackSpeed !== undefined) video.setPlaybackSpeed(saved.playbackSpeed);
+        if (saved.videoScale !== undefined) video.setVideoScale(saved.videoScale);
+        if (saved.subtitlesSize !== undefined) video.setSubtitlesSize(saved.subtitlesSize);
+        if (saved.subtitlesOffset !== undefined) video.setSubtitlesOffset(saved.subtitlesOffset);
+        if (saved.subtitlesTextColor !== undefined) video.setSubtitlesTextColor(saved.subtitlesTextColor);
+        if (saved.subtitlesBackgroundColor !== undefined) video.setSubtitlesBackgroundColor(saved.subtitlesBackgroundColor);
+        if (saved.subtitlesOutlineColor !== undefined) video.setSubtitlesOutlineColor(saved.subtitlesOutlineColor);
+        if (platform.shell.active) {
+            const primaryFont = String(subtitlesFont ?? '').replace(/['"\\]/g, '').trim();
+            if (primaryFont.length > 0) {
+                platform.shell.send('mpv-set-prop', 'sub-font', primaryFont);
+            }
+        }
+    }, [video.state.time, videoKey, subtitlesFont, platform.shell.active]);
+
+    React.useEffect(() => {
+        // Never persist before playback started: engine defaults reported
+        // early (e.g. volume 50) would overwrite the saved values.
+        if (typeof video.state.time !== 'number' || !isFinite(video.state.time)) {
+            return;
+        }
         const timer = setTimeout(() => {
             const partial = {};
             if (video.state.volume !== null) partial.volume = video.state.volume;
@@ -624,6 +661,7 @@ const Player = () => {
         }, 300);
         return () => clearTimeout(timer);
     }, [
+        video.state.time,
         video.state.volume,
         video.state.muted,
         video.state.playbackSpeed,
