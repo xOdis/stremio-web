@@ -14,6 +14,8 @@ const SharePrompt = require('stremio/components/SharePrompt');
 const CONSTANTS = require('stremio/common/CONSTANTS');
 const routesRegexp = require('stremio/common/routesRegexp');
 const useBinaryState = require('stremio/common/useBinaryState');
+const { useTranslatedText } = require('stremio/common/translate');
+const useProfile = require('stremio/common/useProfile');
 const ActionButton = require('./ActionButton');
 const MetaLinks = require('./MetaLinks');
 const MetaPreviewPlaceholder = require('./MetaPreviewPlaceholder');
@@ -28,6 +30,9 @@ const ALLOWED_LINK_REDIRECTS = [
 
 const MetaPreview = React.forwardRef(({ className, compact, name, logo, background, runtime, releaseInfo, released, description, deepLinks, links, trailerStreams, inLibrary, toggleInLibrary, watched, toggleWatched, ratingInfo }, ref) => {
     const { t } = useTranslation();
+    const profile = useProfile();
+    const translatedDescription = useTranslatedText(typeof description === 'string' ? description : null, profile.settings?.interfaceLanguage);
+    const displayDescription = translatedDescription ?? description;
     const [shareModalOpen, openShareModal, closeShareModal] = useBinaryState(false);
     const linksGroups = React.useMemo(() => {
         return Array.isArray(links) ?
@@ -172,9 +177,9 @@ const MetaPreview = React.forwardRef(({ className, compact, name, logo, backgrou
                         null
                 }
                 {
-                    compact && typeof description === 'string' && description.length > 0 ?
+                    compact && typeof displayDescription === 'string' && displayDescription.length > 0 ?
                         <div className={styles['description-container']}>
-                            {description}
+                            {displayDescription}
                         </div>
                         :
                         null
@@ -196,12 +201,12 @@ const MetaPreview = React.forwardRef(({ className, compact, name, logo, backgrou
                         ))
                 }
                 {
-                    !compact && typeof description === 'string' && description.length > 0 ?
+                    !compact && typeof displayDescription === 'string' && displayDescription.length > 0 ?
                         <div className={styles['description-container']}>
                             <div className={styles['label-container']}>
                                 {t('SUMMARY')}
                             </div>
-                            {description}
+                            {displayDescription}
                         </div>
                         :
                         null

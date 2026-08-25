@@ -5,6 +5,7 @@ const PropTypes = require('prop-types');
 const classnames = require('classnames');
 const { languages } = require('stremio/common');
 const { SUBTITLES_SIZES, DEFAULT_SUBTITLES_LANGUAGE, LOCAL_SUBTITLES_LANGUAGE } = require('stremio/common/CONSTANTS');
+const { SUBTITLE_FONTS } = require('../playerSettingsStorage');
 const { Button } = require('stremio/components');
 const styles = require('./styles');
 const { t } = require('i18next');
@@ -16,6 +17,8 @@ const ORIGIN_PRIORITIES = [
     'EMBEDDED',
     'EXCLUSIVE',
 ];
+
+const FONT_LABEL = 'FONT';
 
 const normalizeTracksLang = (tracks) => tracks.map((track) => ({
     ...track,
@@ -153,6 +156,11 @@ const SubtitlesMenu = React.memo(React.forwardRef((props, ref) => {
             }
         }
     }, [props.selectedSubtitlesTrackId, props.selectedExtraSubtitlesTrackId, props.subtitlesOffset, props.extraSubtitlesOffset, props.onSubtitlesOffsetChanged, props.onExtraSubtitlesOffsetChanged]);
+    const onSubtitlesFontChanged = React.useCallback((font) => {
+        if (typeof props.onSubtitlesFontChanged === 'function') {
+            props.onSubtitlesFontChanged(font);
+        }
+    }, [props.onSubtitlesFontChanged]);
     return (
         <div ref={ref} className={classnames(props.className, styles['subtitles-menu-container'])} onMouseDown={onMouseDown}>
             <div className={styles['languages-container']}>
@@ -240,6 +248,23 @@ const SubtitlesMenu = React.memo(React.forwardRef((props, ref) => {
                         disabled={props.assSubtitlesStylingActive || (props.selectedSubtitlesTrackId && props.subtitlesOffset === null) || (props.selectedExtraSubtitlesTrackId && props.extraSubtitlesOffset === null)}
                         onChange={onSubtitlesOffsetChanged}
                     />
+                    <div className={styles['font-select-container']}>
+                        <div className={styles['font-select-label']}>{FONT_LABEL}</div>
+                        <select
+                            className={styles['font-select']}
+                            value={typeof props.subtitlesFontFamily === 'string' ? props.subtitlesFontFamily : SUBTITLE_FONTS[0]}
+                            onChange={(event) => onSubtitlesFontChanged(event.target.value)}
+                            title={'FONT'}
+                        >
+                            {
+                                SUBTITLE_FONTS.map((font) => (
+                                    <option key={font} value={font} style={{ fontFamily: `'${font}', Arial, sans-serif` }}>
+                                        {font}
+                                    </option>
+                                ))
+                            }
+                        </select>
+                    </div>
                 </div>
             </div>
         </div>
@@ -281,6 +306,8 @@ SubtitlesMenu.propTypes = {
     onExtraSubtitlesTrackSelected: PropTypes.func,
     onSubtitlesOffsetChanged: PropTypes.func,
     onSubtitlesSizeChanged: PropTypes.func,
+    onSubtitlesFontChanged: PropTypes.func,
+    subtitlesFontFamily: PropTypes.string,
     onExtraSubtitlesOffsetChanged: PropTypes.func,
     onExtraSubtitlesDelayChanged: PropTypes.func,
     onExtraSubtitlesSizeChanged: PropTypes.func

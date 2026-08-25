@@ -5,7 +5,7 @@ const classnames = require('classnames');
 const debounce = require('lodash.debounce');
 const useTranslate = require('stremio/common/useTranslate');
 const { useStreamingServer, useNotifications, withCoreSuspender, getVisibleChildrenRange, useProfile } = require('stremio/common');
-const { ContinueWatchingItem, EventModal, MainNavBars, MetaItem, MetaRow } = require('stremio/components');
+const { BannerSlider, ContinueWatchingItem, EventModal, MainNavBars, MetaItem, MetaRow } = require('stremio/components');
 const useBoard = require('./useBoard');
 const useContinueWatchingPreview = require('./useContinueWatchingPreview');
 const styles = require('./styles');
@@ -50,6 +50,7 @@ const Board = () => {
             <EventModal />
             <MainNavBars className={styles['board-content-container']} route={'board'}>
                 <div ref={scrollContainerRef} className={styles['board-content']} onScroll={onScroll}>
+                    <BannerSlider className={classnames(styles['board-banner'], 'animation-fade-in')} />
                     {
                         continueWatchingPreview.items.length > 0 ?
                             <MetaRow

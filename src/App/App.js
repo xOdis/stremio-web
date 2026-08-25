@@ -132,6 +132,7 @@ const App = () => {
     React.useEffect(() => {
         if (typeof profile.settings?.interfaceLanguage === 'string') {
             i18n.changeLanguage(profile.settings.interfaceLanguage);
+            document.documentElement.lang = profile.settings.interfaceLanguage;
         }
 
         if (typeof profile.settings?.gamepadSupport === 'boolean') {

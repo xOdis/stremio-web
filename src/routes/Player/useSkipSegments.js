@@ -2,12 +2,16 @@
 
 const React = require('react');
 const { createIntroDbClient } = require('theintrodb');
+const { parseReleaseInfo, getVersionKey } = require('./releaseVersion');
 
 // v2: invalidates empty results cached by the single-provider era, which
 // blocked re-fetching from the additional sources.
-const CACHE_PREFIX = 'skip_segments_v3_';
+// v4: entries are now sanitized against the real video duration and cached
+// per release version + duration bucket.
+const CACHE_PREFIX = 'skip_segments_v4_';
 const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const PROVIDER_TIMEOUT_MS = 8000;
+const FETCH_DEBOUNCE_MS = 1200;
 
 const SEGMENT_TYPES = ['intro', 'recap', 'credits', 'preview'];
 
@@ -175,6 +179,29 @@ const mergeProviderResults = (results) => {
     return byType;
 };
 
+// Timestamps submitted for a different cut of the episode (e.g. a version
+// with a longer producer intro or extended credits) can point past the
+// actual media. Drop segments that cannot fit this video instead of
+// jumping over real scenes.
+const sanitizeSegments = (segments, durationMs) => {
+    if (!Array.isArray(segments)) {
+        return [];
+    }
+    if (!(typeof durationMs === 'number' && isFinite(durationMs) && durationMs > 0)) {
+        return segments.filter((segment) => segment.endMs === null ? segment.type === 'credits' : true);
+    }
+
+    return segments
+        .filter((segment) => {
+            const end = segment.endMs ?? segment.startMs;
+            return segment.type === 'credits' ? segment.startMs < durationMs - 1000 : end <= durationMs * 0.98 && segment.startMs < durationMs * 0.95;
+        })
+        .map((segment) => ({
+            ...segment,
+            endMs: segment.endMs !== null && segment.endMs > durationMs ? durationMs : segment.endMs
+        }));
+};
+
 const flattenSegments = (byType) => {
     const ordered = ['recap', 'intro', 'credits', 'preview'];
     const segments = [];
@@ -184,14 +211,70 @@ const flattenSegments = (byType) => {
     return segments;
 };
 
+// TheIntroDB can return multiple version clusters for the same segment type
+// (e.g. cuts with/without a producer logo). Keep the single cluster that
+// best fits this video's duration instead of stacking several skip buttons.
+const CLUSTER_MERGE_TOLERANCE_MS = 5000;
+const CREDITS_END_MARGIN_MS = 15000;
+
+const pickBestCluster = (entries, durationMs) => {
+    if (!Array.isArray(entries) || entries.length <= 1) {
+        return entries ?? [];
+    }
+
+    const sorted = [...entries].sort((a, b) => a.startMs - b.startMs);
+    const merged = [];
+    sorted.forEach((entry) => {
+        const last = merged[merged.length - 1];
+        if (last !== undefined && entry.startMs - last.startMs <= CLUSTER_MERGE_TOLERANCE_MS) {
+            return;
+        }
+        merged.push(entry);
+    });
+
+    if (merged.length === 1 || !(typeof durationMs === 'number' && isFinite(durationMs) && durationMs > 0)) {
+        return [merged[0]];
+    }
+
+    let best = merged[0];
+    if (best.type === 'credits') {
+        const limit = durationMs - CREDITS_END_MARGIN_MS;
+        merged.forEach((entry) => {
+            if (entry.startMs <= limit && entry.startMs > best.startMs) {
+                best = entry;
+            }
+        });
+    }
+
+    return [best];
+};
+
 const useSkipSegments = (player, duration) => {
     // Segments are stored together with the videoId they belong to, so a
     // freshly-selected episode never inherits the previous episode's data.
-    const [state, setState] = React.useState({ videoId: null, segments: null });
+    const [state, setState] = React.useState({ videoId: null, versionKey: null, segments: null });
 
     const videoId = React.useMemo(() => {
         return player?.selected?.streamRequest?.path?.id ?? null;
     }, [player?.selected?.streamRequest?.path?.id]);
+
+    // Release version of the currently selected stream (e.g. "web-nf-1080p"),
+    // parsed from the stream name/description. Different versions (BluRay,
+    // Netflix, TV...) have different durations, so intro/recap/credits
+    // timestamps are cached per version + duration bucket instead of just
+    // per episode.
+    const versionKey = React.useMemo(() => {
+        const stream = player?.selected?.stream;
+        return getVersionKey(parseReleaseInfo(stream?.name, stream?.description)) ?? 'generic';
+    }, [player?.selected?.stream?.name, player?.selected?.stream?.description]);
+
+    const cacheKey = React.useMemo(() => {
+        let key = `${CACHE_PREFIX}${videoId}_${versionKey}`;
+        if (typeof duration === 'number' && isFinite(duration)) {
+            key += `_${Math.round(duration / 1000)}`;
+        }
+        return key;
+    }, [videoId, versionKey, duration]);
 
     const parsed = React.useMemo(() => {
         return videoId ? parseVideoId(videoId) : null;
@@ -199,14 +282,13 @@ const useSkipSegments = (player, duration) => {
 
     React.useEffect(() => {
         if (!parsed) {
-            setState({ videoId, segments: null });
+            setState({ videoId, versionKey, segments: null });
             return;
         }
 
-        const cacheKey = CACHE_PREFIX + videoId;
         const cached = getCached(cacheKey);
         if (cached !== null) {
-            setState({ videoId, segments: cached });
+            setState({ videoId, versionKey, segments: cached });
             return;
         }
 
@@ -214,34 +296,54 @@ const useSkipSegments = (player, duration) => {
 
         const fetchSegments = async () => {
             const providers = [fromTheIntroDb, fromSkipDb, fromIntroDbApp];
-            const settled = await Promise.allSettled(providers.map((fetcher) => fetcher(parsed, duration)));
+            let settled = await Promise.allSettled(providers.map((fetcher) => fetcher(parsed, duration)));
 
             if (cancelled) return;
 
-            const fulfilled = settled
+            let fulfilled = settled
                 .filter((outcome) => outcome.status === 'fulfilled')
                 .map((outcome) => outcome.value);
+
+            // No duration-matched data: try again without the duration hint so
+            // providers can still return their default episode entry.
+            const hasAnySegment = fulfilled.some((result) =>
+                SEGMENT_TYPES.some((type) => Array.isArray(result[type]) && result[type].length > 0)
+            );
+            if (!hasAnySegment && typeof duration === 'number' && isFinite(duration)) {
+                settled = await Promise.allSettled([fromTheIntroDb(parsed, null), fromSkipDb(parsed, null), fromIntroDbApp(parsed)]);
+                if (cancelled) return;
+                fulfilled = settled
+                    .filter((outcome) => outcome.status === 'fulfilled')
+                    .map((outcome) => outcome.value);
+            }
 
             if (fulfilled.length === 0) {
                 // All providers unreachable (likely offline): don't poison
                 // the cache with an empty result.
-                setState({ videoId, segments: [] });
+                setState({ videoId, versionKey, segments: [] });
                 return;
             }
 
-            const flattened = flattenSegments(mergeProviderResults(fulfilled));
+            const byType = mergeProviderResults(fulfilled);
+            SEGMENT_TYPES.forEach((type) => {
+                byType[type] = pickBestCluster(byType[type], duration);
+            });
+            const flattened = sanitizeSegments(flattenSegments(byType), duration);
             setCached(cacheKey, flattened);
-            setState({ videoId, segments: flattened });
+            setState({ videoId, versionKey, segments: flattened });
         };
 
-        fetchSegments();
+        // Give the freshly selected stream a moment to report its own
+        // duration before querying the providers with it.
+        const debounceTimer = setTimeout(fetchSegments, FETCH_DEBOUNCE_MS);
 
         return () => {
             cancelled = true;
+            clearTimeout(debounceTimer);
         };
-    }, [parsed, duration, videoId]);
+    }, [parsed, duration, videoId, versionKey, cacheKey]);
 
-    return state.videoId !== null && state.videoId === videoId ? state.segments : null;
+    return state.videoId === videoId && state.versionKey === versionKey ? state.segments : null;
 };
 
 module.exports = useSkipSegments;

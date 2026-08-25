@@ -7,3 +7,5 @@
 /localhost.pfx
 /localhost.crt
 /server.log
+
+tmdb.config.json

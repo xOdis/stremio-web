@@ -22,7 +22,7 @@ const Discover = () => {
         transportUrl,
         catalogId
     }), [type, transportUrl, catalogId]);
-    const [queryParams] = useSearchParams();
+    const [queryParams, setSearchParams] = useSearchParams();
     const { t } = useTranslation();
     const core = useCore();
     const [discover, loadNextPage] = useDiscover(urlParams, queryParams);
@@ -30,6 +30,55 @@ const Discover = () => {
     const [inputsModalOpen, openInputsModal, closeInputsModal] = useBinaryState(false);
     const [addonModalOpen, openAddonModal, closeAddonModal] = useBinaryState(false);
     const [selectedMetaItemIndex, setSelectedMetaItemIndex] = React.useState(0);
+
+    const searchSupported = React.useMemo(() => {
+        return Array.isArray(discover.selectable?.extra) && discover.selectable.extra.some(({ name }) => name === 'search');
+    }, [discover.selectable]);
+    const currentSearch = queryParams.get('search') ?? '';
+    const [searchInput, setSearchInput] = React.useState(currentSearch);
+    React.useEffect(() => {
+        setSearchInput(currentSearch);
+    }, [currentSearch, discover.selected]);
+    React.useEffect(() => {
+        const timer = setTimeout(() => {
+            if (searchInput === currentSearch) {
+                return;
+            }
+            const next = new URLSearchParams(queryParams);
+            if (searchInput.trim().length > 0) {
+                next.set('search', searchInput.trim());
+            } else {
+                next.delete('search');
+            }
+            setSearchParams(next, { replace: true });
+        }, 400);
+        return () => clearTimeout(timer);
+    }, [searchInput]);
+
+    const activeFilters = React.useMemo(() => {
+        const chips = [...queryParams.entries()]
+            .filter(([key, value]) => key !== 'search' && value.length > 0)
+            .map(([key, value]) => {
+                const extra = Array.isArray(discover.selectable?.extra) ? discover.selectable.extra.find(({ name }) => name === key) : undefined;
+                const option = extra !== undefined && Array.isArray(extra.options) ? extra.options.find(({ value: optionValue }) => optionValue === value) : undefined;
+                const valueLabel = option !== undefined && typeof option.value === 'string' ? option.value : value;
+                const keyLabel = extra !== undefined ? key.charAt(0).toUpperCase() + key.slice(1) : key.charAt(0).toUpperCase() + key.slice(1);
+                return { key, label: `${keyLabel}: ${valueLabel}` };
+            });
+        if (currentSearch.length > 0) {
+            chips.unshift({ key: 'search', label: `${t('DISCOVER_SEARCH', 'Search')}: ${currentSearch}` });
+        }
+        return chips;
+    }, [queryParams, discover.selectable, currentSearch]);
+    const removeFilter = React.useCallback((key) => {
+        const next = new URLSearchParams(queryParams);
+        next.delete(key);
+        setSearchParams(next);
+    }, [queryParams]);
+    const clearAllFilters = React.useCallback(() => {
+        setSearchParams(new URLSearchParams());
+        setSearchInput('');
+    }, [setSearchParams]);
 
     const selectedMetaItem = React.useMemo(() => {
         return discover.catalog?.content.type === 'Ready' &&
@@ -142,12 +191,68 @@ const Discover = () => {
                                 onSelect={onSelect}
                             />
                         ))}
+                        {
+                            searchSupported ?
+                                <div className={styles['search-container']}>
+                                    <Icon className={styles['search-icon']} name={'search'} />
+                                    <input
+                                        className={styles['search-input']}
+                                        type={'text'}
+                                        value={searchInput}
+                                        placeholder={t('DISCOVER_SEARCH', 'Search')}
+                                        onChange={(event) => setSearchInput(event.target.value)}
+                                        spellCheck={false}
+                                    />
+                                    {
+                                        searchInput.length > 0 ?
+                                            <button
+                                                className={styles['search-clear-button']}
+                                                onClick={() => setSearchInput('')}
+                                                aria-label={t('DISCOVER_CLEAR_ALL', 'Clear all')}
+                                                title={t('DISCOVER_CLEAR_ALL', 'Clear all')}
+                                            >
+                                                <Icon className={styles['search-clear-icon']} name={'close'} />
+                                            </button>
+                                            :
+                                            null
+                                    }
+                                </div>
+                                :
+                                null
+                        }
                         <div className={styles['filter-container']}>
                             <Button className={styles['filter-button']} title={t('ALL_FILTERS')} onClick={openInputsModal}>
                                 <Icon className={styles['filter-icon']} name={'filters'} />
                             </Button>
                         </div>
                     </div>
+                    {
+                        activeFilters.length > 0 ?
+                            <div className={styles['active-filters-container']}>
+                                {
+                                    activeFilters.map(({ key, label }) => (
+                                        <button
+                                            key={key}
+                                            className={styles['filter-chip']}
+                                            onClick={() => removeFilter(key)}
+                                            title={label}
+                                        >
+                                            <span className={styles['filter-chip-label']}>{label}</span>
+                                            <Icon className={styles['filter-chip-icon']} name={'close'} />
+                                        </button>
+                                    ))
+                                }
+                                <Button
+                                    className={styles['clear-filters-button']}
+                                    title={t('DISCOVER_CLEAR_ALL', 'Clear all')}
+                                    onClick={clearAllFilters}
+                                >
+                                    <div className={styles['label']}>{t('DISCOVER_CLEAR_ALL', 'Clear all')}</div>
+                                </Button>
+                            </div>
+                            :
+                            null
+                    }
                     {
                         discover.catalog !== null && !discover.catalog.installed ?
                             <div className={styles['missing-addon-warning-container']}>
@@ -238,16 +343,36 @@ const Discover = () => {
             {
                 inputsModalOpen ?
                     <ModalDialog title={t('CATALOG_FILTERS')} className={styles['selectable-inputs-modal']} onCloseRequest={closeInputsModal}>
-                        {selectInputs.map(({ title, options, value, onSelect }, index) => (
-                            <MultiselectMenu
-                                key={index}
-                                className={styles['select-input']}
-                                title={title}
-                                options={options}
-                                value={value}
-                                onSelect={onSelect}
-                            />
-                        ))}
+                        <div className={styles['filters-modal-content']}>
+                            <div className={styles['filters-modal-grid']}>
+                                {selectInputs.map(({ title, options, value, onSelect, isRequired }, index) => (
+                                    <MultiselectMenu
+                                        key={index}
+                                        className={classnames(styles['select-input'], styles['filters-modal-input'], { [styles['filters-modal-input-required']]: isRequired })}
+                                        title={title}
+                                        options={options}
+                                        value={value}
+                                        onSelect={onSelect}
+                                    />
+                                ))}
+                            </div>
+                            <div className={styles['filters-modal-footer']}>
+                                <Button
+                                    className={styles['filters-reset-button']}
+                                    title={t('DISCOVER_RESET', 'Reset')}
+                                    onClick={clearAllFilters}
+                                >
+                                    <div className={styles['label']}>{t('DISCOVER_RESET', 'Reset')}</div>
+                                </Button>
+                                <Button
+                                    className={styles['filters-apply-button']}
+                                    title={t('DISCOVER_APPLY', 'Apply')}
+                                    onClick={closeInputsModal}
+                                >
+                                    <div className={styles['label']}>{t('DISCOVER_APPLY', 'Apply')}</div>
+                                </Button>
+                            </div>
+                        </div>
                     </ModalDialog>
                     :
                     null

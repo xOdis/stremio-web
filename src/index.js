@@ -28,6 +28,15 @@ const translations = Object.fromEntries(Object.entries(stremioTranslations()).ma
     translation: value
 }]));
 
+const translationOverrides = require('./common/translations');
+Object.entries(translationOverrides).forEach(([language, bundle]) => {
+    if (translations[language] !== undefined) {
+        Object.assign(translations[language].translation, bundle);
+    } else {
+        translations[language] = { translation: bundle };
+    }
+});
+
 i18n
     .use(initReactI18next)
     .init({

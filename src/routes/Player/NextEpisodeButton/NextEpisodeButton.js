@@ -14,7 +14,7 @@ const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
 // "Next Episode" prompt: a glassy pill with a circular countdown and a
 // cancel button. When `secondsLeft` is null the countdown is hidden and it
 // renders as a plain actionable pill.
-const NextEpisodeButton = ({ className, secondsLeft, totalSeconds, onClick, onCancel }) => {
+const NextEpisodeButton = ({ className, secondsLeft, totalSeconds, label, onClick, onCancel }) => {
     const { t } = useTranslation();
     const counting = typeof secondsLeft === 'number' && isFinite(secondsLeft) &&
         typeof totalSeconds === 'number' && isFinite(totalSeconds) && totalSeconds > 0;
@@ -43,7 +43,7 @@ const NextEpisodeButton = ({ className, secondsLeft, totalSeconds, onClick, onCa
                         :
                         <Icon className={styles['icon']} name={'next'} />
                 }
-                <div className={styles['label']}>{t('PLAYER_NEXT_EPISODE', 'Next Episode')}</div>
+                <div className={styles['label']}>{typeof label === 'string' ? label : t('PLAYER_NEXT_EPISODE', 'Next Episode')}</div>
             </Button>
             {
                 counting && typeof onCancel === 'function' ?
@@ -61,6 +61,7 @@ NextEpisodeButton.propTypes = {
     className: PropTypes.string,
     secondsLeft: PropTypes.number,
     totalSeconds: PropTypes.number,
+    label: PropTypes.string,
     onClick: PropTypes.func,
     onCancel: PropTypes.func,
 };

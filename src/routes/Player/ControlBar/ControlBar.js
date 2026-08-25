@@ -27,6 +27,7 @@ const ControlBar = React.forwardRef(({
     nextVideo,
     stream,
     statistics,
+    skipSegments,
     onPlayRequested,
     onPauseRequested,
     onNextVideoRequested,
@@ -129,6 +130,7 @@ const ControlBar = React.forwardRef(({
                 time={time}
                 duration={duration}
                 buffered={buffered}
+                skipSegments={skipSegments}
                 onSeekRequested={onSeekRequested}
                 playbackSpeed={playbackSpeed}
             />
@@ -225,6 +227,7 @@ ControlBar.propTypes = {
     nextVideo: PropTypes.object,
     stream: PropTypes.object,
     statistics: PropTypes.object,
+    skipSegments: PropTypes.array,
     onPlayRequested: PropTypes.func,
     onPauseRequested: PropTypes.func,
     onNextVideoRequested: PropTypes.func,

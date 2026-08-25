@@ -170,6 +170,205 @@ const EXTERNAL_PROXY_ROUTES = {
     '/proxy/introdb': { host: 'api.introdb.app', tls: true },
 };
 
+// Translation proxy for meta descriptions. Primary: unofficial Google
+// endpoint on clients5.google.com (the translate.googleapis.com gtx
+// endpoint is heavily rate-limited). Fallback: MyMemory API.
+// Response: {"translated": "..."}.
+function translateViaGoogle(text, target, onResponse, onError) {
+    const upstreamPath = `/translate_a/t?client=dict-chrome-ex&sl=auto&tl=${encodeURIComponent(target)}&q=${encodeURIComponent(text)}`;
+    const upstream = https.request({
+        host: 'clients5.google.com',
+        port: 443,
+        path: upstreamPath,
+        method: 'GET',
+        headers: {
+            host: 'clients5.google.com',
+            'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+            accept: 'application/json',
+        },
+    }, (up) => {
+        let body = '';
+        up.on('data', (chunk) => { body += chunk; });
+        up.on('end', () => {
+            if (up.statusCode !== 200) {
+                onError(new Error('google upstream ' + up.statusCode));
+                return;
+            }
+            try {
+                const data = JSON.parse(body);
+                // Shape: [["translated text","source_lang"], ...]
+                const translated = Array.isArray(data) ?
+                    data.map((segment) => Array.isArray(segment) ? String(segment[0] ?? '') : '').join('')
+                    :
+                    '';
+                if (translated.length === 0) {
+                    onError(new Error('google empty translation'));
+                    return;
+                }
+                onResponse(translated);
+            } catch (err) {
+                onError(err);
+            }
+        });
+    });
+    upstream.on('error', onError);
+    upstream.end();
+}
+
+function translateViaMyMemory(text, target, onResponse, onError) {
+    const upstreamPath = `/get?q=${encodeURIComponent(text)}&langpair=en|${encodeURIComponent(target)}`;
+    const upstream = https.request({
+        host: 'api.mymemory.translated.net',
+        port: 443,
+        path: upstreamPath,
+        method: 'GET',
+        headers: {
+            host: 'api.mymemory.translated.net',
+            'user-agent': 'StremioDev/1.0',
+            accept: 'application/json',
+        },
+    }, (up) => {
+        let body = '';
+        up.on('data', (chunk) => { body += chunk; });
+        up.on('end', () => {
+            if (up.statusCode !== 200) {
+                onError(new Error('mymemory upstream ' + up.statusCode));
+                return;
+            }
+            try {
+                const data = JSON.parse(body);
+                const translated = typeof data?.responseData?.translatedText === 'string' ? data.responseData.translatedText : '';
+                if (translated.length === 0) {
+                    onError(new Error('mymemory empty translation'));
+                    return;
+                }
+                onResponse(translated);
+            } catch (err) {
+                onError(err);
+            }
+        });
+    });
+    upstream.on('error', onError);
+    upstream.end();
+}
+
+// TMDB trending (this week) proxy. Reads the v3 API key from
+// tmdb.config.json (server-side only — never sent to the browser).
+// Resolves each trending item's IMDb id via TMDB external-ids and
+// returns a normalized, Cinemeta-shaped list: { metas: [...] }.
+const TMDB_CONFIG_PATH = path.join(__dirname, 'tmdb.config.json');
+const TMDB_IMAGE_BASE = 'https://image.tmdb.org/t/p';
+
+function readTmdbApiKey() {
+    try {
+        const config = JSON.parse(fs.readFileSync(TMDB_CONFIG_PATH, 'utf8'));
+        return typeof config?.apiKey === 'string' && config.apiKey.trim().length > 0 ? config.apiKey.trim() : null;
+    } catch (_e) {
+        return null;
+    }
+}
+
+function tmdbRequest(upstreamPath) {
+    return new Promise((resolve, reject) => {
+        const upstream = https.request({
+            host: 'api.themoviedb.org',
+            port: 443,
+            path: upstreamPath,
+            method: 'GET',
+            headers: {
+                host: 'api.themoviedb.org',
+                'user-agent': 'StremioDev/1.0',
+                accept: 'application/json',
+            },
+        }, (up) => {
+            let body = '';
+            up.on('data', (chunk) => { body += chunk; });
+            up.on('end', () => {
+                if (up.statusCode !== 200) {
+                    reject(new Error('tmdb upstream ' + up.statusCode));
+                    return;
+                }
+                try {
+                    resolve(JSON.parse(body));
+                } catch (err) {
+                    reject(err);
+                }
+            });
+        });
+        upstream.on('error', reject);
+        upstream.end();
+    });
+}
+
+function tmdbToMeta(result, resolvedType, imdbId) {
+    const type = resolvedType === 'tv' ? 'series' : 'movie';
+    const name = result.title ?? result.name ?? null;
+    const posterPath = result.poster_path ?? null;
+    return {
+        id: imdbId,
+        type,
+        name,
+        poster: posterPath !== null ? `${TMDB_IMAGE_BASE}/w500${posterPath}` : null,
+        imdbRating: typeof result.vote_average === 'number' && result.vote_average > 0 ? result.vote_average.toFixed(1) : null,
+        releaseInfo: (result.release_date ?? result.first_air_date ?? '').slice(0, 4)
+    };
+}
+
+async function handleTmdbTrending(req, res) {
+    const apiKey = readTmdbApiKey();
+    if (apiKey === null) {
+        sendText(res, 503, 'tmdb key not configured', 'text/plain');
+        return;
+    }
+    try {
+        const trending = await tmdbRequest(`/3/trending/all/week?api_key=${encodeURIComponent(apiKey)}`);
+        const results = Array.isArray(trending?.results) ? trending.results : [];
+        const withImdb = await Promise.all(results.slice(0, 24).map(async (result) => {
+            const resolvedType = result.media_type === 'tv' ? 'tv' : 'movie';
+            try {
+                const external = await tmdbRequest(`/3/${resolvedType}/${result.id}/external_ids?api_key=${encodeURIComponent(apiKey)}`);
+                if (typeof external?.imdb_id !== 'string' || !external.imdb_id.startsWith('tt')) {
+                    return null;
+                }
+                return tmdbToMeta(result, resolvedType, external.imdb_id);
+            } catch (_e) {
+                return null;
+            }
+        }));
+        const metas = withImdb.filter((meta) => meta !== null && meta.name !== null);
+        sendText(res, 200, JSON.stringify({ metas }), 'application/json; charset=utf-8');
+    } catch (err) {
+        log(`TMDB_ERROR: ${err.message}`);
+        sendText(res, 502, 'tmdb error', 'text/plain');
+    }
+}
+
+function handleTranslate(req, res, query) {
+    const text = (query.get('text') || '').slice(0, 5000);
+    const target = (query.get('target') || 'en').replace(/[^a-zA-Z-]/g, '').slice(0, 10);
+    if (text.length === 0 || target.length === 0) {
+        sendText(res, 400, 'missing text/target', 'text/plain');
+        return;
+    }
+    let settled = false;
+    const finish = (translated) => {
+        if (settled) return;
+        settled = true;
+        sendText(res, 200, JSON.stringify({ translated }), 'application/json; charset=utf-8');
+    };
+    const failWithFallback = (err) => {
+        log(`TRANSLATE google failed: ${err.message}, trying MyMemory`);
+        translateViaMyMemory(text, target, finish, (fallbackErr) => {
+            log(`TRANSLATE mymemory failed: ${fallbackErr.message}`);
+            if (!settled) {
+                settled = true;
+                sendText(res, 502, 'translate error', 'text/plain');
+            }
+        });
+    };
+    translateViaGoogle(text, target, finish, failWithFallback);
+}
+
 function proxyExternal(req, res, mount, target, targetPath) {
     const transport = target.tls ? https : http;
     proxyRequest(res, {
@@ -276,6 +475,16 @@ const handler = (req, res) => {
             proxyExternal(req, res, mount, EXTERNAL_PROXY_ROUTES[mount], externalPath);
             return;
         }
+    }
+
+    if (parsed.pathname === '/proxy/translate') {
+        handleTranslate(req, res, parsed.searchParams);
+        return;
+    }
+
+    if (parsed.pathname === '/proxy/tmdb/trending') {
+        handleTmdbTrending(req, res);
+        return;
     }
 
     if (req.method === 'GET' || req.method === 'HEAD') {

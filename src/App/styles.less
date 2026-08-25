@@ -4,6 +4,14 @@
 @import (reference) '~@stremio/stremio-colors/less/stremio-colors.less';
 
 @font-face {
+    font-family: 'InterVariable';
+    src: url('/assets/fonts/InterVariable.woff2') format('woff2-variations');
+    font-weight: 100 900;
+    font-style: normal;
+    font-display: swap;
+}
+
+@font-face {
     font-family: 'PlusJakartaSans';
     src: url('/assets/fonts/PlusJakartaSans.ttf') format('truetype');
 }
@@ -17,6 +25,8 @@
 :global {
     @import (once, less) '~stremio/common/animations.less';
     @import (once, less) '~stremio-router/styles.css';
+    // Thmanyah Sans - Arabic UI font (loaded from CDN, see html[lang^='ar'] below).
+    @import (once, less) '~@dawod/thmanyah-font-web/sans.css';
 }
 
 // iOS pads the bottom inset more than needed, so we deduce the actual inset size when using the webapp
@@ -157,13 +167,18 @@ svg {
 html {
     width: @html-width;
     height: @html-height;
-    font-family: 'PlusJakartaSans', 'Arial', 'Helvetica', 'TwemojiFlags', 'sans-serif';
+    font-family: 'InterVariable', 'PlusJakartaSans', 'Arial', 'Helvetica', 'TwemojiFlags', 'sans-serif';
     overflow: auto;
     overscroll-behavior: none;
     user-select: none;
     touch-action: manipulation;
     background-color: var(--primary-background-color);
     -webkit-tap-highlight-color: transparent;
+
+    // Arabic UI uses the Thmanyah Sans font (loaded via @dawod/thmanyah-font-web).
+    &[lang^='ar'] {
+        font-family: 'Thmanyah Sans', 'InterVariable', 'PlusJakartaSans', 'Arial', 'Helvetica', 'TwemojiFlags', 'sans-serif';
+    }
 
     @media (display-mode: standalone) {
         width: @html-standalone-width;
