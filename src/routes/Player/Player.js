@@ -647,6 +647,15 @@ const Player = () => {
         writePlayerSettings({ subtitlesFontFamily: font });
     }, []);
     React.useEffect(() => {
+        // Desktop shell: video (and subtitles) render natively via mpv, so
+        // the font must go through the shell IPC as an mpv property. The
+        // DOM/::cue injection below only affects the browser video path.
+        if (platform.shell.active) {
+            const primaryFont = String(subtitlesFont ?? '').replace(/['"\\]/g, '').trim();
+            if (primaryFont.length > 0) {
+                platform.shell.send('mpv-set-prop', 'sub-font', primaryFont);
+            }
+        }
         const container = video.containerRef.current;
         if (container === null) {
             return;
@@ -678,7 +687,7 @@ const Player = () => {
             }
         });
         return () => observer.disconnect();
-    }, [subtitlesFont, video.state.manifest, video.containerRef]);
+    }, [subtitlesFont, video.state.manifest, video.containerRef, platform.shell.active]);
 
     const onAudioTrackSelected = React.useCallback((id) => {
         video.setAudioTrack(id);
