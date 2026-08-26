@@ -1,0 +1,213 @@
+// Copyright (C) 2017-2026 Smart code 203358507
+
+@import (reference) '~@stremio/stremio-colors/less/stremio-colors.less';
+
+@keyframes popover-in {
+    0% {
+        opacity: 0;
+        transform: translateY(-0.4rem) scale(0.98);
+    }
+
+    100% {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+}
+
+// The panel is portaled to <body> with fixed coordinates (like the
+// MultiselectMenu dropdown) so nothing in the app shell can clip it.
+.popover-portal {
+    position: fixed;
+    z-index: 1000;
+
+    .popover {
+        position: relative;
+        top: auto;
+        right: auto;
+        width: 100%;
+        overflow: auto;
+        background-color: var(--modal-background-color);
+        border-radius: var(--border-radius);
+        box-shadow: 0 0.5rem 2rem rgba(0, 0, 0, 0.5);
+        animation: popover-in 150ms ease-out;
+
+        .popover-content {
+            padding: 1.25rem;
+            display: flex;
+            flex-direction: column;
+            gap: 1.25rem;
+
+            .popover-section {
+                display: flex;
+                flex-direction: column;
+                gap: 0.6rem;
+
+                .section-title {
+                    font-size: 0.72rem;
+                    font-weight: 700;
+                    letter-spacing: 0.08em;
+                    text-transform: uppercase;
+                    color: var(--primary-foreground-color);
+                    opacity: 0.55;
+                }
+
+                .chip-group {
+                    display: flex;
+                    flex-direction: row;
+                    flex-wrap: wrap;
+                    gap: 0.4rem;
+
+                    .chip {
+                        padding: 0.4rem 0.8rem;
+                        background-color: var(--overlay-color);
+                        border: 1px solid transparent;
+                        border-radius: 2rem;
+                        font-size: 0.8rem;
+                        font-weight: 500;
+                        color: var(--primary-foreground-color);
+                        cursor: pointer;
+                        transition: background-color 120ms ease-out, border-color 120ms ease-out;
+
+                        &:hover {
+                            border-color: var(--secondary-accent-color);
+                        }
+
+                        &:focus-visible {
+                            outline: none;
+                            box-shadow: 0 0 0 0.15rem var(--primary-foreground-color);
+                        }
+
+                        &.selected {
+                            background-color: var(--secondary-accent-color);
+                            border-color: var(--secondary-accent-color);
+                        }
+                    }
+                }
+
+                .toggle-row {
+                    display: flex;
+                    flex-direction: row;
+                    align-items: center;
+                    justify-content: space-between;
+                    padding: 0.4rem 0;
+                    background-color: transparent;
+                    border: none;
+                    cursor: pointer;
+
+                    &:focus-visible {
+                        outline: none;
+                        box-shadow: 0 0 0 0.15rem var(--primary-foreground-color);
+                        border-radius: var(--border-radius);
+                    }
+
+                    .toggle-label {
+                        font-size: 0.9rem;
+                        font-weight: 500;
+                        color: var(--primary-foreground-color);
+                    }
+
+                    .toggle-switch {
+                        flex: none;
+                        position: relative;
+                        width: 2.5rem;
+                        height: 1.4rem;
+                        border-radius: 1.4rem;
+                        background-color: var(--overlay-color);
+                        transition: background-color 150ms ease-out;
+
+                        .toggle-knob {
+                            position: absolute;
+                            top: 0.2rem;
+                            left: 0.2rem;
+                            width: 1rem;
+                            height: 1rem;
+                            border-radius: 50%;
+                            background-color: var(--primary-foreground-color);
+                            opacity: 0.6;
+                            transition: transform 150ms ease-out, opacity 150ms ease-out;
+                        }
+                    }
+
+                    &.selected {
+                        .toggle-switch {
+                            background-color: var(--secondary-accent-color);
+
+                            .toggle-knob {
+                                transform: translateX(1.1rem);
+                                opacity: 1;
+                            }
+                        }
+                    }
+                }
+
+                .extra-selects {
+                    display: grid;
+                    grid-template-columns: 1fr;
+                    gap: 0.5rem;
+
+                    .extra-select {
+                        height: 3rem;
+                        display: flex;
+                        background-color: var(--overlay-color);
+                        border-radius: var(--border-radius);
+
+                        .multiselect-menu-container {
+                            max-height: 10rem;
+                            overflow: auto;
+                        }
+                    }
+                }
+            }
+        }
+
+        .popover-footer {
+            position: sticky;
+            bottom: 0;
+            display: flex;
+            flex-direction: row;
+            align-items: center;
+            justify-content: space-between;
+            gap: 1rem;
+            padding: 0.9rem 1.25rem;
+            border-top: 1px solid var(--overlay-color);
+            background-color: var(--modal-background-color);
+
+            .results-count {
+                font-size: 0.8rem;
+                font-weight: 500;
+                color: var(--primary-foreground-color);
+                opacity: 0.7;
+            }
+
+            .reset-button {
+                flex: none;
+                padding: 0.45rem 1rem;
+                background-color: transparent;
+                border: 1px solid var(--primary-foreground-color);
+                border-radius: 2rem;
+                font-size: 0.8rem;
+                font-weight: 600;
+                color: var(--primary-foreground-color);
+                cursor: pointer;
+                transition: background-color 120ms ease-out;
+
+                &:hover {
+                    background-color: var(--overlay-color);
+                }
+
+                &:focus-visible {
+                    outline: none;
+                    box-shadow: 0 0 0 0.15rem var(--primary-foreground-color);
+                }
+            }
+        }
+    }
+}
+
+@media only screen and (prefers-reduced-motion: reduce) {
+    .popover-portal {
+        .popover {
+            animation: none;
+        }
+    }
+}

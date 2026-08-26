@@ -443,6 +443,7 @@ const Player = () => {
         setNextEpisodeDismissed(false);
         autoNextFiredRef.current = false;
         relatedDismissedRef.current = false;
+        playbackStartedRef.current = false;
     }, [videoKey]);
 
     // Series finale: the selected video is the last entry of the series'
@@ -612,6 +613,7 @@ const Player = () => {
     // (volume) or overwritten later (subtitle styling on
     // implementationChanged), so everything saved is re-applied here.
     const playbackStartedForKeyRef = React.useRef(null);
+    const playbackStartedRef = React.useRef(false);
     React.useEffect(() => {
         restoredSettingsRef.current = {};
     }, [videoKey]);
@@ -663,9 +665,16 @@ const Player = () => {
     }, [video.state.time, videoKey, subtitlesFont, platform.shell.active]);
 
     React.useEffect(() => {
+        if (!playbackStartedRef.current && typeof video.state.time === 'number' && isFinite(video.state.time)) {
+            playbackStartedRef.current = true;
+        }
+    }, [video.state.time]);
+
+    React.useEffect(() => {
         // Never persist before playback started: engine defaults reported
         // early (e.g. volume 50) would overwrite the saved values.
         if (typeof video.state.time !== 'number' || !isFinite(video.state.time)) {
+        if (!playbackStartedRef.current) {
             return;
         }
         const timer = setTimeout(() => {

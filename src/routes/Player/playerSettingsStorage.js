@@ -1,6 +1,7 @@
 // Copyright (C) 2017-2026 Smart code 203358507
 
 const KEY = 'stremio.playerSettings';
+const SERVER_URL = '/api/player-settings';
 
 // Fonts offered in the subtitle settings. Bundled Google Fonts (Cairo,
 // Alexandria, Tajawal, Lalezar, Noto Naskh Arabic, Inter, Roboto,
@@ -91,11 +92,44 @@ const readPlayerSettings = () => {
 const writePlayerSettings = (partial) => {
     try {
         const current = readPlayerSettings();
-        localStorage.setItem(KEY, JSON.stringify({ ...current, ...partial }));
+        const merged = { ...current, ...partial };
+        localStorage.setItem(KEY, JSON.stringify(merged));
+        // Also persist to the local server so settings survive if the shell
+        // clears WebView2 localStorage on relaunch.
+        try {
+            fetch(SERVER_URL, {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify(merged),
+            }).catch(function() {});
+        } catch (_e) {}
     } catch (_e) {
         // storage unavailable: settings stay in memory only
     }
 };
+
+// On startup, restore server-backed settings into localStorage.  The
+// Stremio shell may clear WebView2 storage on relaunch, so the server
+// file is the durable source of truth.  This fetch is fire-and-forget;
+// readPlayerSettings() returns synchronously from localStorage, so
+// the first few reads before the fetch completes may use stale data —
+// that window is tiny and self-heals on next page load.
+try {
+    fetch(SERVER_URL)
+        .then(function(res) { return res.ok ? res.json() : null; })
+        .then(function(data) {
+            if (data && typeof data === 'object' && Object.keys(data).length > 0) {
+                // Only overwrite localStorage if the server has data.
+                // If localStorage already has newer data the POST
+                // (triggered by writePlayerSettings) will bring the
+                // server up to speed on next write.
+                var existing = {};
+                try { existing = JSON.parse(localStorage.getItem(KEY)) || {}; } catch (_e) {}
+                localStorage.setItem(KEY, JSON.stringify({ ...data, ...existing }));
+            }
+        })
+        .catch(function() {});
+} catch (_e) {}
 
 // Arabic interface gets Arial by default, everything else a modern
 // humanist sans that reads well at small subtitle sizes.

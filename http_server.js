@@ -350,6 +350,37 @@ async function handleTmdbTrending(req, res) {
 // webpack build output.
 const FONTS_DIR = path.resolve(__dirname, 'assets', 'fonts');
 
+// Player settings persistence: saves to a JSON file on disk so settings
+// survive even if the shell clears WebView2 localStorage on relaunch.
+const PLAYER_SETTINGS_PATH = path.join(__dirname, 'player-settings.json');
+
+function handlePlayerSettings(req, res) {
+    if (req.method === 'GET') {
+        try {
+            const data = fs.readFileSync(PLAYER_SETTINGS_PATH, 'utf8');
+            sendText(res, 200, data, 'application/json; charset=utf-8');
+        } catch (_e) {
+            sendText(res, 200, '{}', 'application/json; charset=utf-8');
+        }
+        return;
+    }
+    if (req.method === 'POST') {
+        let body = '';
+        req.on('data', (chunk) => { body += chunk; });
+        req.on('end', () => {
+            try {
+                JSON.parse(body); // validate
+                fs.writeFileSync(PLAYER_SETTINGS_PATH, body, 'utf8');
+                sendText(res, 200, '{"ok":true}', 'application/json; charset=utf-8');
+            } catch (e) {
+                sendText(res, 400, 'invalid json', 'text/plain');
+            }
+        });
+        return;
+    }
+    sendText(res, 405, 'method not allowed', 'text/plain');
+}
+
 function handleFontsDir(req, res) {
     sendText(res, 200, JSON.stringify({ path: FONTS_DIR }), 'application/json; charset=utf-8');
 }
@@ -516,6 +547,11 @@ const handler = (req, res) => {
 
     if (parsed.pathname === '/fonts-list') {
         handleFontsList(req, res);
+        return;
+    }
+
+    if (parsed.pathname === '/api/player-settings') {
+        handlePlayerSettings(req, res);
         return;
     }
 

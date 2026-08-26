@@ -4,6 +4,7 @@ const React = require('react');
 const UrlUtils = require('url');
 const { useCore } = require('stremio/core');
 const { useModelState } = require('stremio/common');
+const { FILTER_PARAM_KEYS } = require('./useDiscoverFilters');
 
 const map = (discover) => ({
     ...discover,
@@ -32,6 +33,14 @@ const useDiscover = (urlParams, queryParams) => {
             }
         }, 'discover');
     }, []);
+    // Only server-side extras (genre, search...) reach the addon. Client
+    // filter params (minRating, sort, poster...) stay in the URL for the
+    // grid but must NEVER be sent to the addon, and changing them must not
+    // re-request the catalog — hence the serialized-extras memo key.
+    const serverExtrasKey = React.useMemo(() => {
+        const clientKeys = new Set(FILTER_PARAM_KEYS);
+        return JSON.stringify(Array.from(queryParams.entries()).filter(([key]) => !clientKeys.has(key)));
+    }, [queryParams]);
     const action = React.useMemo(() => {
         if (typeof urlParams.transportUrl === 'string' && typeof urlParams.type === 'string' && typeof urlParams.catalogId === 'string') {
             const { hostname } = UrlUtils.parse(urlParams.transportUrl);
@@ -47,7 +56,7 @@ const useDiscover = (urlParams, queryParams) => {
                                     resource: 'catalog',
                                     type: urlParams.type,
                                     id: urlParams.catalogId,
-                                    extra: Array.from(queryParams.entries())
+                                    extra: JSON.parse(serverExtrasKey)
                                 }
                             }
                         }
@@ -67,9 +76,14 @@ const useDiscover = (urlParams, queryParams) => {
         return {
             action: 'Unload'
         };
-    }, [urlParams, queryParams]);
+    }, [urlParams, serverExtrasKey]);
     const discover = useModelState({ model: 'discover', action, map, deps: ['ctx'] });
-    return [discover, loadNextPage];
+    const reload = React.useCallback(() => {
+        if (action.action !== 'Unload') {
+            core.transport.dispatch(action, 'discover');
+        }
+    }, [action, core]);
+    return [discover, loadNextPage, reload];
 };
 
 module.exports = useDiscover;

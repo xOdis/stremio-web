@@ -46,3 +46,10 @@
         background-color: var(--overlay-color);
     }
 }
+
+// The dropdown menu is portaled to <body>, so this wrapper lives at the
+// top level of the stylesheet (not nested inside .multiselect-menu).
+.dropdown-portal {
+    position: fixed;
+    z-index: 1000;
+}

@@ -78,7 +78,16 @@ const useSelectableInputs = (discover) => {
     const selectableInputs = React.useMemo(() => {
         return mapSelectableInputs(discover, t, navigate);
     }, [discover.selected, discover.selectable]);
-    return selectableInputs;
+    // Raw building blocks for the redesigned control bar: catalog quick-switch
+    // pills and the genre extra (rendered as one-tap chips).
+    const selectableInfo = React.useMemo(() => ({
+        catalogs: Array.isArray(discover.selectable?.catalogs) ? discover.selectable.catalogs : [],
+        genreExtra: Array.isArray(discover.selectable?.extra) ?
+            discover.selectable.extra.find(({ name }) => name === 'genre') ?? null
+            :
+            null
+    }), [discover.selectable]);
+    return [...selectableInputs, selectableInfo];
 };
 
 module.exports = useSelectableInputs;

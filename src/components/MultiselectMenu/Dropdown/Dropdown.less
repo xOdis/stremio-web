@@ -20,8 +20,22 @@
 
     &.open {
         display: block;
-        max-height: calc(@item-height * 7);
+        max-height: min(calc(@item-height * 7), 45vh);
         overflow: auto;
+    }
+
+    &.open-up.open {
+        top: auto;
+        bottom: 100%;
+    }
+
+    // Inside a fixed portal wrapper the wrapper owns the placement.
+    &.portal-mode {
+        position: static;
+        top: auto;
+        bottom: auto;
+        left: auto;
+        width: 100%;
     }
 
     .back-button {

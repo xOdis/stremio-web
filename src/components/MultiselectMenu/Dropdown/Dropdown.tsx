@@ -15,9 +15,11 @@ type Props = {
     level: number;
     setLevel: (level: number) => void;
     onSelect: (value: any) => void;
+    openUp?: boolean;
+    inPortal?: boolean;
 };
 
-const Dropdown = ({ level, setLevel, options, onSelect, value, menuOpen }: Props) => {
+const Dropdown = ({ level, setLevel, options, onSelect, value, menuOpen, openUp, inPortal }: Props) => {
     const { t } = useTranslation();
     const optionsRef = useRef(new Map());
     const containerRef = useRef(null);
@@ -49,7 +51,7 @@ const Dropdown = ({ level, setLevel, options, onSelect, value, menuOpen }: Props
 
     return (
         <div
-            className={classNames(styles['dropdown'], { [styles['open']]: menuOpen })}
+            className={classNames(styles['dropdown'], { [styles['open']]: menuOpen }, { [styles['open-up']]: openUp && !inPortal }, { [styles['portal-mode']]: inPortal })}
             role={'listbox'}
             ref={containerRef}
         >
